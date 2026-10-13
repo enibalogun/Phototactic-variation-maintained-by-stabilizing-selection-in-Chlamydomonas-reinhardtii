@@ -1,0 +1,49 @@
+1) Selecting known mutated regions in bam file
+samtools view -b -L /research/projects/chlamydomonas/PhototacticRate/data/MA_regions.bed MA_TOTAL.mark_duplicates.bam > MA_multiple_regions.bam
+
+2) Selecting known mutated regions in bam file to GVCF
+gatk HaplotypeCaller -R /research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa -I MA_TOTAL.mark_duplicates.bam -L /research/projects/chlamydomonas/PhototacticRate/data/MA_regions.bed -O mutated_regions.g.vcf -ERC BP_RESOLUTION
+
+3) Converting GVCF to VCF
+gatk SelectVariants -R /research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa -V mutated_regions.g.vcf --exclude-non-variants False -O mutated_regions.vcf
+
+4) Merge VCF files
+bcftools merge -O v -o MA_merged_samples.vcf /research/projects/chlamydomonas/PhototacticRate/data/Recombinant_QTL_data/WGS_MA/MA_mutated_regions.vcf.gz /research/projects/chlamydomonas/PhototacticRate/data/Recombinant_QTL_data/CC2344_BACKCROSS/MA_mutated_regions.vcf.gz /research/projects/chlamydomonas/PhototacticRate/data/Recombinant_QTL_data/MA_ALL_RECOMBINANTS/mutated_regions.vcf.gz /research/projects/chlamydomonas/PhototacticRate/data/Recombinant_QTL_data/MA_FASTEST_RECOMBINANTS/mutated_regions.vcf.gz
+
+5) Filtering VCF files
+bcftools filter -e 'GQ < 20' MA_merged_samples.vcf -o MA_merged_final1.vcf
+
+6) Convert haploid genotype to pseudo-diploid
+sed -E 's/\t(0)(:)/\t0\/0\2/g; s/\t(1)(:)/\t1\/1\2/g' MA_merged_final1.vcf > MA_merged_final2.vcf
+
+7) Remove sites with missing information from at least one sample
+bcftools view -i 'F_MISSING == 0 && FORMAT/DP != "." && FORMAT/AD != "."' MA_merged_final2.vcf -O v -o MA_merged_final3.vcf
+
+8) Remove unncessary phasing annotation
+bcftools annotate -x FORMAT/PGT,FORMAT/PID MA_merged_final3.vcf -O v -o MA_merged_final4.vcf
+
+9) Replaces missing annotation for AD with 0
+awk 'BEGIN {FS=OFS="\t"} !/^#/ {
+    for(i=10; i<=NF; i++) {
+        # Fix middle, leading, and trailing standard dots
+        gsub(/:\.:/, ":0:", $i);
+        gsub(/:\.$/, ":0", $i);
+        
+        # Fix comma-separated missing depths (e.g., AD fields)
+        gsub(/:\.,/, ":0,", $i);   # Handles :.,
+        gsub(/,\.:/, ",0:", $i);   # Handles ,.:
+        gsub(/,\.,/, ",0,", $i);   # Handles ,.,
+        gsub(/,\.$/, ",0", $i);    # Handles trailing comma-dot like 0,.
+    }
+} 1' MA_merged_final4.vcf > MA_merged_final5.vcf
+
+10) Final replacement of missing data with 0
+sed -r 's/([^:0-9.])\./\10/g; s/\.([^0-9])/0\1/g' MA_merged_final5.vcf > MA_merged_final.vcf
+
+###############################################################################################
+###### Acquiring list of parentals reads mapped to each recombinant pool at each variant ######
+###############################################################################################
+
+1) Running BRM perl script
+# perl tools/vcf2bsa.pl <samples information file> <markers.vcf> <output file> #
+perl /research/projects/chlamydomonas/PhototacticRate/data/BRM/tools/vcf2bsa.pl /research/projects/chlamydomonas/PhototacticRate/scripts/BRM_conf.txt MA_merged_final.vcf MA_markers.bsa

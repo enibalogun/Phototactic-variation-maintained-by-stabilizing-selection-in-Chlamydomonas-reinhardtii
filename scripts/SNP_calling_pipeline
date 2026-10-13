@@ -1,0 +1,85 @@
+(SAMPLES,R) = glob_wildcards('{sample}_{r}.fastq.gz')
+ 
+rule allout:
+    input:
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.bam', sample=SAMPLES),
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.bam.bai', sample=SAMPLES),
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.out.bam', sample=SAMPLES),
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.mark_duplicates.bam', sample=SAMPLES),
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.marked_dup_metrics.txt', sample=SAMPLES),
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.mark_duplicates.bam.bai', sample=SAMPLES),
+        expand('/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.vcf.gz', sample=SAMPLES)
+        
+rule genome_index:
+    input: 
+        fasta = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa',
+        R1 = '/research/projects/chlamydomonas/PhototacticRate/raw_data/{sample}_R1.fastq.gz',
+        R2 = '/research/projects/chlamydomonas/PhototacticRate/raw_data/{sample}_R2.fastq.gz'
+    output:
+        bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.bam'
+    threads: 8
+    shell:
+        'bwa mem {input.fasta} {input.R1} {input.R2} | samtools view -b -o {output.bam}'
+        
+rule sort_bam:
+    input:
+        bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.bam'
+    output:
+        sorted_bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.bam'
+    threads: 8
+    shell:
+        'samtools sort {input.bam} -o {output.sorted_bam} && rm {input.bam}'
+        
+rule index_bam:
+    input:
+        sorted_bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.bam'
+    output:
+        '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.bam.bai'
+    threads: 8
+    shell:
+        'samtools index {input.sorted_bam}'
+        
+rule addorreplacereadgroups:
+    input:
+        sorted_bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.bam'
+    output:
+        sorted = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.out.bam'
+    threads: 8
+    shell:
+        'picard AddOrReplaceReadGroups -I {input.sorted_bam} -O {output.sorted} -RGID {wildcards.sample} -RGLB lib1 -RGPL Illumina -RGPU unit1 -RGSM {wildcards.sample} --VALIDATION_STRINGENCY LENIENT'
+         
+rule markduplicates:
+    input:
+        sorted = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.sorted.out.bam'
+    output:
+        marked_dup = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.mark_duplicates.bam',
+        metrics = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.marked_dup_metrics.txt'
+    threads: 8
+    shell:
+        'picard MarkDuplicates -I {input.sorted} -O {output.marked_dup} -M {output.metrics}'
+        
+rule index_bam2:
+    input:
+        sorted_bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.mark_duplicates.bam'
+    output:
+        '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.mark_duplicates.bam.bai'
+    threads: 8
+    shell:
+        'samtools index {input.sorted_bam}'
+        
+rule haplotypecaller:
+    input:
+        fasta = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa',
+        reference_dict= '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.dict',
+        reference_bwt = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa.bwt',
+        reference_pac = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa.pac',
+        reference_ann = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa.ann',
+        reference_amb = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa.amb',
+        reference_sa  = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa.sa',
+        reference_fai = '/research/references/chlamydomonas/6.1_chlamy/CreinhardtiiCC_4532_707_v6.0.fa.fai',
+        bam = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.mark_duplicates.bam'
+    output:
+        vcf = '/research/projects/chlamydomonas/PhototacticRate/data/sam_files/{sample}.vcf.gz'
+    threads: 8
+    shell:
+        'gatk --java-options "-Xmx4g" HaplotypeCaller -R {input.fasta} -I {input.bam} -O {output.vcf}'
